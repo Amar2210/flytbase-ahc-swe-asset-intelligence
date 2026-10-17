@@ -1,0 +1,40 @@
+flowchart TD
+    IMPORT[Dataset ZIP or folder] --> LOAD[Validate, fingerprint and import]
+    LOAD --> DB[(SQLite: source records, documents and shared context)]
+    USER[Inspection crew] --> UI[Streamlit: dataset, user and conversation]
+    UI --> TURN[Save current prompt; load recent history once]
+    PRIVATE[(Private chats and response token metrics)] -->|Up to 16 stored messages; 12000 chars; preserve current prompt| TURN
+    POLICY[Instructions, schema, dates and tool definitions] --> CONTEXT
+    TURN --> CONTEXT[Working context retained throughout this request]
+    CONTEXT --> COUNT[Google countTokens: complete generation payload]
+    COUNT -->|Known count at most 12000, or count unavailable| MODEL[Google AI Studio: Gemma 31B generateContent]
+    COUNT -->|Known count above input budget| STOP[Stop before generation; retain evidence]
+    COUNT --> METRICS[Per-call tokens, status and inference HTTP attempts]
+    MODEL -->|Returned usage overrides preflight when provided| METRICS
+    METRICS --> UI
+    METRICS --> PRIVATE
+    MODEL -->|Read tool calls| READ{Python executes selected tool}
+    READ --> WELL[get_well: inspection, notes and corrections]
+    READ --> SQL[query_records: isolated read-only SQL]
+    READ --> DOCS[search_documents / get_document: keywords and exact text]
+    READ --> HISTORY[search_my_conversations: private dates, filters and pages]
+    READ --> SPILLS[get_spill_compliance: SR-02 rule, effective spills and linked containment reports]
+    SPILLS --> DB
+    HISTORY --> PRIVATE
+    WELL --> DB
+    SQL --> VIEWS[Effective inspection views: thresholds and corrections]
+    VIEWS --> DB
+    DOCS --> DB
+    READ --> EVIDENCE[Selected results, sources and assistant tool calls]
+    EVIDENCE -->|Compact citations; 12000 chars per tool, 24000 total; resend context| CONTEXT
+    MODEL -->|Final answer and visual specification| OUTPUT[Validate visual references; use actual tool rows]
+    OUTPUT --> UI
+    OUTPUT --> PRIVATE
+    MODEL -->|Shared update proposal| REVIEW[Validate and stage; same user reviews and confirms]
+    REVIEW --> WRITE[Save attributed note or typed correction]
+    WRITE --> DB
+    UI -->|Explicit Show preview button| PREVIEW[Visual preview: six preset database reads]
+    PREVIEW --> SQL
+    PREVIEW --> WELL
+    PREVIEW -->|Render directly; no model calls or chat writes| UI
+    LIMITS[Hard maximum three model rounds; final call without tools; eight tools per reply; transient inference at most three HTTP attempts] -.-> MODEL

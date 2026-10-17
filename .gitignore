@@ -1,0 +1,24 @@
+# Local configuration contains secrets. Keep the example only.
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+data/
+challenge-dataset/
+*.sqlite
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.db
+*.log
+.DS_Store
+
+# Temporary directories created by offline tests.
+tests/*-test-*/
+tests/*-check-*/
+tests/data/

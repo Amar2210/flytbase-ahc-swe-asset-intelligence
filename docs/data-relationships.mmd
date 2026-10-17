@@ -1,0 +1,62 @@
+flowchart LR
+    subgraph FLEET["Fleet: geography and people"]
+        AREAS["Areas: 4<br/>areas.json / areas[]"]
+        TEAMS["Teams: 4<br/>areas.json / teams[]"]
+        USERS["Users: 15<br/>users.json / users[]"]
+    end
+    subgraph ASSETS["Per-well structured sources"]
+        WELLS["Wells: 200<br/>metadata.json / asset_id"]
+        EQUIPMENT["Equipment: 1,094<br/>embedded equipment[]"]
+        LATEST["Latest inspection snapshot<br/>embedded last_inspection"]
+        INSPECTIONS["Inspections: 39,567<br/>inspections.jsonl"]
+        MAINTENANCE["Maintenance: 5,665<br/>maintenance.jsonl"]
+        REGULATORY["Regulator events: 90<br/>regulatory-events.jsonl"]
+        CONTEXT["Human notes: 141<br/>context.jsonl"]
+        IMAGES["79,805 image path references<br/>image files not supplied"]
+    end
+    subgraph DOCUMENTS["Markdown evidence: not supplied SQL tables"]
+        MANUALS["2 well-type manuals<br/>T200.md / T350.md"]
+        REPORTS["1,509 repair reports<br/>maintenance-reports/*.md"]
+        SOPS["3 SOP documents<br/>SOP-SR / SOP-RC / SOP-WS"]
+        PROTOCOLS["16 protocol definitions in SOPs<br/>SR-01..04 / RC-01..05 / WS-01..07"]
+    end
+    AREAS -->|"team_id"| TEAMS
+    AREAS -->|"asset_ids[]"| WELLS
+    USERS -->|"team_id"| TEAMS
+    TEAMS -->|"lead_user_id = user_id"| USERS
+    WELLS -->|"area_id"| AREAS
+    WELLS -->|"team_id"| TEAMS
+    WELLS -->|"in_charge_user_id = user_id"| USERS
+    WELLS -->|"equipment[] nesting"| EQUIPMENT
+    WELLS -->|"last_inspection nesting"| LATEST
+    LATEST -->|"inspection_id"| INSPECTIONS
+    LATEST -->|"inspector_user_id"| USERS
+    INSPECTIONS -->|"asset_id"| WELLS
+    INSPECTIONS -->|"inspector_user_id = user_id"| USERS
+    INSPECTIONS -->|"evidence_images[]"| IMAGES
+    MAINTENANCE -->|"asset_id"| WELLS
+    MAINTENANCE -->|"technician_user_id = user_id"| USERS
+    MAINTENANCE -->|"triggered_by_inspection_id: nullable"| INSPECTIONS
+    MAINTENANCE -->|"report_file: relative path, nullable"| REPORTS
+    REGULATORY -->|"asset_id"| WELLS
+    REGULATORY -->|"related_inspection_id"| INSPECTIONS
+    CONTEXT -->|"asset_id"| WELLS
+    CONTEXT -->|"author_user_id = user_id"| USERS
+    CONTEXT -->|"inspection_id: correction notes only"| INSPECTIONS
+    WELLS -.->|"well_type selects filename"| MANUALS
+    MAINTENANCE -.->|"same asset_id and equipment_kind = kind"| EQUIPMENT
+    REGULATORY -.->|"protocol_id matches code in Markdown"| PROTOCOLS
+    PROTOCOLS -.->|"defined inside document"| SOPS
+    REPORTS -.->|"Asset ID in text"| WELLS
+    REPORTS -.->|"Triggered by inspection ID in text"| INSPECTIONS
+    REPORTS -.->|"Crew lead user ID in text"| USERS
+    REPORTS -.->|"protocol codes in compliance tables"| PROTOCOLS
+    REPORTS -.->|"own and prior maintenance IDs in text"| MAINTENANCE
+    MANUALS -.->|"procedure references"| SOPS
+    SOPS -.->|"owner team IDs in text"| TEAMS
+    classDef record fill:#e7f2ec,stroke:#267457,color:#15372a
+    classDef embedded fill:#f2f4f0,stroke:#758477,color:#25362a
+    classDef doc fill:#eaf0fa,stroke:#466d9d,color:#213e64
+    class AREAS,TEAMS,USERS,WELLS,INSPECTIONS,MAINTENANCE,REGULATORY,CONTEXT record
+    class EQUIPMENT,LATEST,IMAGES embedded
+    class MANUALS,REPORTS,SOPS,PROTOCOLS doc

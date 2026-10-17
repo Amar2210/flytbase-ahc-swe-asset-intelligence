@@ -1,0 +1,9 @@
+flowchart LR
+    RAW["Original inspection<br/>inspection_id = INS-0001-0070<br/>spill_detected = true"]
+    RULE["Spill Response SOP section 7<br/>qualified person confirms<br/>water, mud or shadow"]
+    NOTE["context.jsonl<br/>CTX-0001-001<br/>note_type = correction<br/>inspection_id = INS-0001-0070<br/>author_user_id = U-401"]
+    RESULT["Derived spill results<br/>exclude this detection from<br/>spill reporting and statistics<br/>retain original inspection"]
+    RULE -.->|"defines when correction applies"| NOTE
+    NOTE -->|"target inspection_id"| RAW
+    RAW -->|"source evidence"| RESULT
+    NOTE -->|"accepted override"| RESULT
