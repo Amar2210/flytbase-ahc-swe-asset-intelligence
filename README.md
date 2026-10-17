@@ -1,5 +1,11 @@
 # Asset Intelligence Copilot
 
+## Report and demo
+
+- **[Read the project report](report.md)** — system design, memory scopes, rate limits, optimization, and six screenshots showing the results before and after the changes.
+- **[View the database and memory schema](docs/application-schema.md)** — rendered Mermaid diagram of the SQLite tables and their relationships.
+- **[Follow the Q8 demo](docs/q8-demo.md)** — exact messages, user switching, confirmation steps, and expected results.
+
 First working iteration of a local Python + Streamlit + SQLite copilot for an oil
 inspection team. Gemma 31B through Google AI Studio / Gemini API is the default.
 An optional OpenRouter free Gemma adapter uses the same tools.
