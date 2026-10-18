@@ -17,8 +17,6 @@ The token ledger contains no prompts, API keys or private messages.
 Lines show logical joins. Most record references are checked by Python, not declared as SQLite foreign keys.
 Dataset foreign keys and the shown primary keys are declared in SQLite.
 
-[Editable Mermaid](application-schema.mmd)
-
 ```mermaid
 erDiagram
     datasets {
@@ -225,7 +223,7 @@ They combine original measurements with accepted corrections and the well-type t
 They do not replace the original inspection rows.
 
 SOPs, manuals and repair reports are records in `documents`. There is no separate SOP table.
-The optional FTS5 index and its internal tables are omitted from this chart.
+Document search ranks keyword matches directly from these records.
 The model-readable SQL snapshot excludes private chats, private preferences, review state and the token ledger.
 
 ## Write behavior

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from copilot.db import connect
 from copilot.ingest import DatasetValidationError, import_dataset, import_zip
+from copilot.tools import ToolService
 
 
 class IngestionTests(unittest.TestCase):
@@ -65,6 +66,22 @@ class IngestionTests(unittest.TestCase):
             self.assertEqual(row["source_line"], 1)
             self.assertEqual(conn.execute("SELECT origin FROM context_notes").fetchone()[0], "dataset")
             self.assertEqual(conn.execute("SELECT as_of_date FROM datasets").fetchone()[0], "2026-10-15")
+
+    def test_document_search_without_unused_full_text_index(self):
+        imported = import_dataset(self.root, self.db)
+        with closing(connect(self.db)) as conn:
+            self.assertIsNone(conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='document_fts'"
+            ).fetchone())
+        tools = ToolService(self.db, imported["dataset_id"], "U")
+        result = tools.execute("search_documents", {"query": "Custom well"})
+        self.assertNotIn("error", result)
+        self.assertEqual(result["matching_documents"], 1)
+        self.assertEqual(result["documents"][0]["path"], "fleet/well-types/CUSTOM.md")
+        self.assertTrue(result["citations"][0]["line_start"])
+        document = tools.execute("get_document", {"path": result["documents"][0]["path"]})
+        self.assertNotIn("error", document)
+        self.assertIn("22 °C", document["body"])
 
     def test_invalid_reference_rolls_back_all_new_records(self):
         first = import_dataset(self.root, self.db)

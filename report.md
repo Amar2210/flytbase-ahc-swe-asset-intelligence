@@ -82,15 +82,11 @@ The first five screenshots document the earlier run. Image 6 shows the result af
 
 ![The test field is selected in the application.](docs/report-images/01-field-overview.png)
 
-[Open the repository image](docs/report-images/01-field-overview.png).
-
 The question asks: **“Which well produced the most oil in 2026?”** A valid ranking requires oil quantities or an agreed estimate.
 
 ### Image 2: incomplete answer and token counts
 
 ![The incomplete answer shows three model rounds and context counts.](docs/report-images/02-context-and-incomplete-answer.png)
-
-[Open the repository image](docs/report-images/02-context-and-incomplete-answer.png).
 
 The answer says the model could not finish its explanation. The UI shows **7,148 latest input tokens**, **8,651 peak input tokens**, and **three model rounds**. Latest and peak are individual request measurements. Neither value is the total input sent during one minute.
 
@@ -100,23 +96,17 @@ The screenshot does not show all three input counts, request times, or the provi
 
 ![The results contain ten inspection rows for WELL-0001 with status and temperature threshold columns.](docs/report-images/03-inspection-rows.png)
 
-[Open the repository image](docs/report-images/03-inspection-rows.png).
-
 The table contains ten inspection rows for WELL-0001. `production_delta_c` is the manual's temperature-difference threshold. `is_producing` is an inspection-based classification. Neither field measures barrels of produced oil. Producing-inspection counts are only a proxy.
 
 ### Image 4: sources with limited relevance
 
 ![The source list includes a spill SOP, maintenance reports, a SQL query, and well-type manuals.](docs/report-images/04-retrieved-evidence.png)
 
-[Open the repository image](docs/report-images/04-retrieved-evidence.png).
-
 The evidence includes a spill SOP, maintenance reports, manuals, and SQL. The displayed passages do not establish annual oil-production volume. Ten citations cannot establish an unsupported conclusion.
 
 ### Image 5: the retrieval path
 
 ![The trace shows document search and a ten-row SQL query.](docs/report-images/05-tool-trace.png)
-
-[Open the repository image](docs/report-images/05-tool-trace.png).
 
 The trace first searches documents for `production volume oil`. It then selects inspection fields for 2026 with `LIMIT 10`. The query has no aggregation or ranking. It cannot select the well with the largest annual quantity. The date comparison also uses a date-only upper bound against timestamps, which can exclude records on 31 December.
 
@@ -164,8 +154,6 @@ The suite checks memory isolation, controlled writes, source retention, pacing, 
 ## 8. Result after optimization
 
 ![The corrected answer explains that measured oil-production volume is unavailable.](docs/report-images/06-after-optimization-data-limit.png)
-
-[Open the repository image](docs/report-images/06-after-optimization-data-limit.png).
 
 The same question now produces a data-limit explanation. The answer identifies the missing production-volume or flow-rate field. It separates temperature-based status from produced-oil volume and spill volume. It offers inspection-based comparisons as explicit proxies. The response cites one coverage source, S1. It does not present an unsupported ranking.
 

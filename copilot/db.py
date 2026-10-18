@@ -92,7 +92,3 @@ def initialize(db_path: str | Path) -> None:
             WHEN field='spill_detected' THEN 'ai_detection_feedback'
             WHEN field IN ('spill_area_pct','spill_est_volume_bbl') THEN 'ai_estimate_feedback'
             ELSE NULL END WHERE feedback_kind IS NULL""")
-        try:
-            conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS document_fts USING fts5(dataset_id UNINDEXED, document_id UNINDEXED, title, body)")
-        except sqlite3.OperationalError:
-            pass  # Document search can use SQL/lexical matching without FTS5.

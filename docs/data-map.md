@@ -1,7 +1,7 @@
 # Complete source data map
 
-**Current application database:** see the [SQLite schema with shared and private memory](application-schema.md)
-and its [editable Mermaid source](application-schema.mmd). That chart includes the new runtime memory and rate-limit tables.
+**Current application database:** see the [SQLite schema with shared and private memory](application-schema.md).
+That chart includes runtime memory and rate-limit tables.
 The source inventory below describes the original sample release.
 
 Inspected: 17 October 2026. Source revision: `b8de8c9bd68f40334e5d06922126169e4f3bf3ca`.
@@ -13,12 +13,6 @@ structures, or documents. This is not an application database migration.
 **The well hub is `asset_id`. No single field exists in every source.** Geography,
 people, manuals, and SOPs connect through additional identifiers and documented
 lookups. Start with the overview, then the complete field diagram and SOP map.
-
-- [Browsable schema explorer](data-map.html)
-- [Rendered overview SVG](data-relationships.svg) / [editable Mermaid](data-relationships.mmd)
-- [Rendered field ER diagram SVG](data-fields.svg) / [editable Mermaid](data-fields.mmd)
-- [Rendered SOP/document diagram SVG](data-documents.svg) / [editable Mermaid](data-documents.mmd)
-- [Machine-readable audit of every record and field](data-schema-inventory.json)
 
 ## Sources and actual counts
 
@@ -616,4 +610,3 @@ Source: `assets/*/context.jsonl`. Records: 141.
 - [Dataset guide](../challenge-dataset/02-dataset-guide.md)
 - [Fleet geography and teams](../challenge-dataset/sample-data/fleet/areas.json)
 - [Fleet users](../challenge-dataset/sample-data/fleet/users.json)
-- [Machine-readable full audit](data-schema-inventory.json)

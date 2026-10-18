@@ -206,11 +206,6 @@ def import_dataset(source_path: str | Path, db_path: str | Path, label: str | No
             conn.execute("INSERT INTO documents VALUES(?,?,?,?,?,?,?,?)", (dataset_id, document_id, relative, kind, asset_id, file.stem if kind == "manual" else None, title, body))
             docs[relative] = document_id
             counts["documents"] = counts.get("documents", 0) + 1
-            try:
-                conn.execute("INSERT INTO document_fts(dataset_id,document_id,title,body) VALUES(?,?,?,?)", (dataset_id, document_id, title, body))
-            except Exception as exc:
-                if "no such table" not in str(exc):
-                    raise
             if kind == "manual":
                 threshold, quote, line = _threshold(body, relative)
                 conn.execute("INSERT INTO well_types VALUES(?,?,?,?,?,?)", (dataset_id, file.stem, threshold, document_id, quote, line))
@@ -278,7 +273,6 @@ def import_dataset(source_path: str | Path, db_path: str | Path, label: str | No
                             report = PurePosixPath(str(record["report_file"]).replace("\\", "/"))
                             if report.is_absolute() or ".." in report.parts or ":" in str(report):
                                 raise DatasetValidationError(f"Unsafe report_file in {relative}:{line}")
-                            # Dataset report_file is relative to its well folder.
                             report_path = (asset_dir / Path(*report.parts)).relative_to(root).as_posix()
                             if report_path not in docs:
                                 # Also accept a dataset-root path in same-format test sets.
@@ -343,8 +337,7 @@ def import_dataset(source_path: str | Path, db_path: str | Path, label: str | No
             inspection = refs["inspections"].get(last.get("inspection_id"))
             if not inspection or inspection["asset_id"] != asset_id:
                 raise DatasetValidationError(f"Invalid last_inspection reference in {source}")
-        # The benchmark date is explicit in the guide. Standalone uploads default to
-        # their latest observation and can be overridden in the UI.
+        # Standalone uploads use the latest observation unless release notes set a benchmark date.
         as_of_date = latest_date
         guide = root.parent / "02-dataset-guide.md"
         if guide.is_file():

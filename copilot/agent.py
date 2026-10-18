@@ -119,8 +119,7 @@ def _bounded_tool_payload(payload: dict, max_chars: int) -> str:
 
         inspect(value)
         if not candidates:
-            # An unusually wide object can still exceed the bound after its values
-            # are shortened. Keep the marker and an explicit retrieval limitation.
+            # Wide objects can exceed the budget even after their values are shortened.
             value["result"] = {"context_omitted": True,
                                "note": "This result exceeds the model evidence budget. Full records remain server-side; do not infer omitted facts."}
             return rendered()
@@ -193,7 +192,6 @@ def _resolve_visuals(specs: Any, results: dict[str, dict], prompt: str = "") -> 
         for result in reversed(list(results.values())):
             rows = _rows_for_visual(result)
             if rows:
-                # A safe fallback uses actual backend data, never model-provided rows.
                 visuals = [{"kind": "status" if "well" in result and not re.search(r"\btable\b", prompt, re.I) else "table",
                             "title": "Retrieved inspection evidence" if "well" in result else "Query results", "data": rows}]
                 break
@@ -241,7 +239,6 @@ def _record_fallback(results: dict[str, dict], citations: list[dict]) -> dict | 
                 facts.append("This is recorded inspection evidence; live production is unconfirmed.")
             if not facts:
                 for key, value in list(record.items())[:8]:
-                    # Preserve explicit column names for arbitrary aggregates.
                     rendered = "Unknown" if value is None else str(value)[:300]
                     facts.append(f"{key.replace('_', ' ').capitalize()}: **{rendered}**.")
             sections.append(" ".join(facts) + " " + source_text)
@@ -406,7 +403,6 @@ class Copilot:
             raise ValueError("The proposed update has missing or unsupported fields.")
         if len(json.dumps(arguments)) > 16000:
             raise ValueError("The proposed update is too long.")
-        # Build a concrete preview from validated targets before requesting review.
         arguments = dict(arguments)
         conn = db.connect(self.db_path)
         try:
@@ -526,9 +522,7 @@ class Copilot:
             if capability_limit is not None:
                 return finish(capability_limit)
 
-        # A fully specified correction is a structured command that can be
-        # validated locally. It still goes through the same review/confirmation
-        # boundary, so provider availability cannot prevent preparing the draft.
+        # Explicit corrections can stage without a provider, but still require review.
         draft = parse_explicit_correction(message) if write_requested else None
         if draft:
             try:
@@ -585,8 +579,7 @@ class Copilot:
                                      all(t.get("tool") in compound_names and t.get("status") == "completed" for t in trace) and
                                      all(not r.get("error") and not r.get("truncated") for r in results.values()) and
                                      profile.names <= compound_names | WRITE_TOOLS | PRIVATE_WRITE_TOOLS)
-                # Compound tools already collect their SOP/notice and related
-                # records. An independent read request needs no third lookup.
+                # Complete compound reads need synthesis, not another lookup.
                 final_round = round_index == round_limit - 1 or (complete_compound and not write_requested)
                 available_definitions = definitions
                 if complete_compound and write_requested:
@@ -636,8 +629,7 @@ class Copilot:
                     if write_requested:
                         return unsaved_update("The request reached its model-round limit before a valid write proposal was prepared. "
                                               "Please retry the update with the exact target, replacement value and reason.")
-                    # A provider may return function calls despite tools being disabled.
-                    # Never execute them or make a fourth request to finish the answer.
+                    # Some providers ignore disabled tools; never execute those calls.
                     fallback = _record_fallback(results, citations)
                     result = {"answer": (fallback["answer"] if fallback else
                                           "I could not retrieve enough source evidence to answer this question.") +
@@ -671,7 +663,6 @@ class Copilot:
                             return finish({"answer": "Saved privately for **" + tool_result["user_name"] + "**: " + "; ".join(description) + ". Source: your instruction in this conversation. " + (f"[{source_marker}]" if source_marker else ""),
                                            "citations": citations, "visuals": [], "pending_update": None,
                                            "tool_calls": trace, "write_status": "saved_private"})
-                        # Keep an invalid private write as evidence for clarification.
                         tool_id = "T" + str(len(results) + 1)
                         results[tool_id] = tool_result
                         tool_payloads[call["id"]] = {"tool_result_id": tool_id, "result": tool_result, "available_citations": []}
@@ -716,9 +707,7 @@ class Copilot:
                                       "Any retrieved status describes existing records; it does not apply your correction. "
                                       "Retry with the exact inspection ID, corrected field, new value and reason.",
                                       provider_error=str(error))
-            # A transient outage can happen before the model selects a tool.
-            # Exact well IDs permit a bounded local lookup without asking a
-            # second model or inventing SQL. Reports/writes remain unsaved.
+            # Exact well IDs allow a bounded read-only fallback before any model retrieval.
             if not results and (error.retryable or error.status_code == 429) and not self._explicit_write_request(message):
                 assets = list(dict.fromkeys(normalize_asset_id(match[0]) for match in re.finditer(
                     r"\bWELL[-_ ]?0*\d{1,4}\b", message, re.I)))[:3]

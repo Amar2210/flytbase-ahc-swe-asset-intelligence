@@ -49,7 +49,7 @@ SAFE_FUNCTIONS = set("""abs avg char coalesce concat concat_ws count date dateti
     row_number rtrim sign strftime substr substring sum time timediff total trim
     typeof unicode unixepoch unlikely upper""".split())
 
-BRIEF_TOOL_DESCRIPTIONS = {
+TOOL_DESCRIPTIONS = {
     "get_well": "One well: latest inspection, effective production, corrections, fresh shared notes, ownership and evidence.",
     "get_recalled_pumps": "Complete current recalled-pump table: supplier notice + latest completed installation + shared reports. Hearsay remains listed. my_area=current user's team; include_install_cost=installation-job total with private formatting. Use this instead of separate recall/installation searches.",
     "record_equipment_replacement": "WRITE proposal, UI confirmation required. Attribute explicit completed replacement to selected user; preserve maintenance. 'X told me'=hearsay with X as claimed_source_name; keep recalled until confirmed. Dates use operational TODAY.",
@@ -152,30 +152,30 @@ class ToolService:
         return [r[1] for r in conn.execute(f"PRAGMA table_info({_quote(table)})")]
 
     def tool_definitions(self, names=None):
-        def tool(name, description, properties, required=()):
-            return {"name": name, "description": description, "parameters": {
+        def tool(name, properties, required=()):
+            return {"name": name, "description": TOOL_DESCRIPTIONS[name], "parameters": {
                 "type": "object", "properties": properties, "required": list(required),
                 "additionalProperties": False}}
         text = {"type": "string"}
         definitions = [
-            tool("get_well", "Get current inspection-based status, ownership, corrections, shared notes, open repairs and evidence for one well.", {"asset_id": text}, ("asset_id",)),
-            tool("get_recalled_pumps", "Find recalled pumps still installed as of evaluation date, using supplier notice, latest completed Parts installed reports and shared replacement claims. Always use this for current recall lists; hearsay is flagged and retained. my_area uses this user's current team. Returns complete table rows and citations; include_install_cost adds installation-job total in the user's saved currency format.", {"my_area": {"type": "boolean"}, "include_install_cost": {"type": "boolean"}}),
-            tool("record_equipment_replacement", "WRITE: Propose an explicitly reported completed pump replacement. A direct report becomes an attributed shared replacement after UI confirmation. 'X told me' is hearsay: identify X as claimed_source_name, save unconfirmed and retain on recall list. Never invent a work order or alter original maintenance. Relative dates use evaluation date.", {"asset_id": text, "effective_on": {"type": "string", "description": "YYYY-MM-DD; for yesterday subtract one day from evaluation date."}, "statement": text, "evidence_basis": {"type": "string", "enum": ["direct_report", "hearsay"]}, "claimed_source_name": {"type": ["string", "null"]}}, ("asset_id", "effective_on", "statement", "evidence_basis")),
-            tool("save_my_preferences", "WRITE PRIVATE: Remember this user's explicit well-list sorting and cost-display preferences across conversations. Never share these with other users. Only supply preferences actually requested.", {"well_sort": {"type": "string", "enum": ["area_then_well_id", "well_id"]}, "cost_display": {"type": "string", "enum": ["usd", "thousands_usd"]}}),
-            tool("get_my_preferences", "Read only the selected user's saved private well-list sorting and cost formatting preferences.", {}),
-            tool("get_spill_compliance", "Check spill containment against the imported SR-02 SOP for an area, in one read. Joins effective spills to repair reports, extracts actual elapsed containment hours, and returns breaches, compliant and unknown counts with source lines. Never substitutes repair duration or reporting delay. Dates are inclusive; default is 90 calendar days ending on evaluation date.", {
+            tool("get_well", {"asset_id": text}, ("asset_id",)),
+            tool("get_recalled_pumps", {"my_area": {"type": "boolean"}, "include_install_cost": {"type": "boolean"}}),
+            tool("record_equipment_replacement", {"asset_id": text, "effective_on": {"type": "string", "description": "YYYY-MM-DD; for yesterday subtract one day from evaluation date."}, "statement": text, "evidence_basis": {"type": "string", "enum": ["direct_report", "hearsay"]}, "claimed_source_name": {"type": ["string", "null"]}}, ("asset_id", "effective_on", "statement", "evidence_basis")),
+            tool("save_my_preferences", {"well_sort": {"type": "string", "enum": ["area_then_well_id", "well_id"]}, "cost_display": {"type": "string", "enum": ["usd", "thousands_usd"]}}),
+            tool("get_my_preferences", {}),
+            tool("get_spill_compliance", {
                 "area": {"type": "string", "description": "Exact geographic area name or area_id."},
                 "start_date": {"type": "string", "description": "Inclusive YYYY-MM-DD; omit to derive from days."},
                 "end_date": {"type": "string", "description": "Inclusive YYYY-MM-DD; defaults to evaluation date."},
                 "days": {"type": "integer", "minimum": 1, "maximum": 3660},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 300},
             }, ("area",)),
-            tool("query_records", "Run a read-only SQLite SELECT over the complete selected dataset. Use effective_inspections for production and spills. Aggregations cover all matching rows; output is capped at 300 rows. Other datasets and all private chat messages are inaccessible.", {"sql": text}, ("sql",)),
-            tool("search_documents", "Find manual, SOP and repair report passages using lexical search. Include asset_id for a well's reports. Return paths and line citations; read the full document when needed.", {"query": text, "asset_id": text, "well_type": text, "limit": {"type": "integer", "minimum": 1, "maximum": 10}}, ("query",)),
-            tool("get_document", "Read an imported document by its exact dataset-relative path, with line numbers. No filesystem access.", {"path": text}, ("path",)),
-            tool("add_shared_note", "WRITE: Record an explicit operational update for all users. Do not use for questions, hypotheticals or ordinary chat. Requires UI confirmation. A note is a reported claim and does not override sensor data or prove restart after expiry.", {"asset_id": text, "text": text, "valid_from": {"type": "string", "description": "YYYY-MM-DD"}, "valid_to": {"type": ["string", "null"]}, "note_type": {"type": "string", "enum": ["operator_note", "operator_feedback"]}}, ("asset_id", "text", "valid_from")),
-            tool("correct_inspection", "WRITE: Preserve and apply a user-confirmed correction against an exact inspection and field. Original values remain intact. Requires UI confirmation; a competing correction becomes disputed rather than silently winning.", {"inspection_id": text, "field": {"type": "string", "enum": sorted(CORRECTABLE_FIELDS)}, "value": {"type": ["number", "boolean", "null"]}, "reason": text}, ("inspection_id", "field", "value", "reason")),
-            tool("search_my_conversations", "Search this selected user's private messages across ALL their conversations in this dataset, including older history. For 'the three wells we discussed yesterday', use period='yesterday' without query unless keywords are needed. Periods use runtime field-local TODAY, never analysis_as_of; weeks run Monday-Sunday. Explicit start_date/end_date are inclusive local calendar dates, converted to exact UTC [start,end) bounds. Optional query requires all literal whitespace-separated keywords; asset_id matches well IDs including shorthand. Results are newest first, with IDs, timestamps and private sources. Follow next_cursor until has_more=false before claiming complete coverage; continuation calls supply only cursor and optional limit. No user/dataset/session selector is permitted.", {
+            tool("query_records", {"sql": text}, ("sql",)),
+            tool("search_documents", {"query": text, "asset_id": text, "well_type": text, "limit": {"type": "integer", "minimum": 1, "maximum": 10}}, ("query",)),
+            tool("get_document", {"path": text}, ("path",)),
+            tool("add_shared_note", {"asset_id": text, "text": text, "valid_from": {"type": "string", "description": "YYYY-MM-DD"}, "valid_to": {"type": ["string", "null"]}, "note_type": {"type": "string", "enum": ["operator_note", "operator_feedback"]}}, ("asset_id", "text", "valid_from")),
+            tool("correct_inspection", {"inspection_id": text, "field": {"type": "string", "enum": sorted(CORRECTABLE_FIELDS)}, "value": {"type": ["number", "boolean", "null"]}, "reason": text}, ("inspection_id", "field", "value", "reason")),
+            tool("search_my_conversations", {
                 "period": {"type": "string", "enum": ["today", "yesterday", "this week", "last week"]},
                 "start_date": {"type": "string", "description": "Inclusive local date, YYYY-MM-DD; omit period."},
                 "end_date": {"type": "string", "description": "Inclusive local date, YYYY-MM-DD; omit period."},
@@ -185,10 +185,8 @@ class ToolService:
                 "limit": {"type": "integer", "minimum": 1, "maximum": 30},
                 "cursor": {"type": "string", "description": "Use returned next_cursor, with no filters; retains original filters, clock window and snapshot."},
             }),
-            tool("recent_my_conversations", "Compatibility shortcut for the selected user's latest private messages in this dataset (up to 30). Use search_my_conversations for dated, filtered, or complete paginated retrieval.", {"limit": {"type": "integer", "minimum": 1, "maximum": 30}}),
+            tool("recent_my_conversations", {"limit": {"type": "integer", "minimum": 1, "maximum": 30}}),
         ]
-        for definition in definitions:
-            definition["description"] = BRIEF_TOOL_DESCRIPTIONS[definition["name"]]
         return [definition for definition in definitions if names is None or definition["name"] in names]
 
     def execute(self, name, arguments):
@@ -803,19 +801,10 @@ Use date(inspected_at) BETWEEN inclusive dates; recorded_status can be stale. Ma
         limit = max(1, min(int(limit), 30))
         with self._connect() as conn:
             self._check_session(conn)
-            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            # Chat persistence is deliberately separate from the public SQL snapshot.
-            if "chat_messages" in tables:
-                rows = conn.execute("SELECT message_id,session_id,role,substr(content,1,16000) content,created_at FROM chat_messages WHERE dataset_id=? AND user_id=? ORDER BY message_id DESC LIMIT ?", (self.dataset_id, self.user_id, limit)).fetchall()
-            elif "messages" in tables:
-                columns = self._columns(conn, "messages")
-                if "user_id" in columns and "dataset_id" in columns:
-                    rows = conn.execute("SELECT * FROM messages WHERE dataset_id=? AND user_id=? ORDER BY created_at DESC LIMIT ?", (self.dataset_id, self.user_id, limit)).fetchall()
-                elif "conversations" in tables:
-                    rows = conn.execute("SELECT m.* FROM messages m JOIN conversations c ON c.conversation_id=m.conversation_id WHERE c.dataset_id=? AND c.user_id=? ORDER BY m.created_at DESC LIMIT ?", (self.dataset_id, self.user_id, limit)).fetchall()
-                else:
-                    rows = []
-            else:
-                rows = []
+            rows = conn.execute(
+                "SELECT message_id,session_id,role,substr(content,1,16000) content,created_at "
+                "FROM chat_messages WHERE dataset_id=? AND user_id=? ORDER BY message_id DESC LIMIT ?",
+                (self.dataset_id, self.user_id, limit),
+            ).fetchall()
         return {"scope": "private", "user_id": self.user_id, "messages": [dict(r) for r in reversed(rows)],
                 "note": "Only this user's own conversations in this dataset are available. If no relevant conversation exists, say so."}

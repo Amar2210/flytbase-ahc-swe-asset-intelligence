@@ -1,6 +1,5 @@
 """Recall semantics: actual installations, shared reports and private preferences."""
 from contextlib import closing
-import json
 from pathlib import Path
 import unittest
 from uuid import uuid4

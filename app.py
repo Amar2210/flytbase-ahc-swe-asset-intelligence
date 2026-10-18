@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import json
 import re
 from datetime import date
@@ -32,14 +33,8 @@ TABLE_LABELS = {
 
 
 def _rows(db_path: str | Path, sql: str, params: tuple = ()) -> list[dict]:
-    """Use short lived connections so uploads and chat writes remain visible."""
-    connection = db.connect(db_path)
-    try:
-        cursor = connection.execute(sql, params)
-        names = [column[0] for column in cursor.description or []]
-        return [dict(zip(names, row)) for row in cursor.fetchall()]
-    finally:
-        connection.close()
+    with closing(db.connect(db_path)) as connection:
+        return [dict(row) for row in connection.execute(sql, params)]
 
 
 def _json(value, fallback):

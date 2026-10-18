@@ -7,17 +7,19 @@ and the difference between a direct report and hearsay.
 
 ## Prepare the app
 
-1. Refresh `http://127.0.0.1:8501/` to load the newly imported dataset and updated tools.
-2. In the sidebar's **Import dataset** panel, select **Test field · Jan 2027**.
-   Keep this dataset selected throughout all five messages.
+1. Follow the [quick start](../README.md#quick-start), including the test-field
+   settings. Start the app and open `http://127.0.0.1:8501/`.
+2. In the sidebar's **Import dataset** panel, import
+   `challenge-dataset/test-data/dataset` with label **Test field · Jan 2027** and
+   select it. Keep this dataset selected throughout all five messages.
 3. Open the **Copilot** tab. Use **User / crew member** to switch identities and
    **＋ New conversation** whenever the steps below require a new session.
 
 The test dataset contains 600 wells and defines operational “today” as
 **15 January 2027**. Its analysis date and `COPILOT_REPORT_DATE=2027-01-15`
 make “yesterday” in turn 1 mean **14 January 2027**. Private conversation-history
-dates still use the real clock in the configured field timezone: **17 October
-2026** during this preparation. They are not shifted into January 2027.
+dates still use the real clock in the configured field timezone. They are not
+shifted into January 2027.
 
 The local Google route was configured with `gemma-4-26b-a4b-it` after the 31B
 route returned HTTP 500 errors. The first write below was verified with a real

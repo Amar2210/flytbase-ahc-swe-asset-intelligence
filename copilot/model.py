@@ -82,8 +82,7 @@ class GemmaClient:
         self.max_output_tokens = max_output_tokens
         self.max_input_tokens = max(256, int(max_input_tokens))
         self.max_http_attempts = max(1, min(3, int(max_http_attempts)))
-        # Keep numeric usage only. Prompts, keys and provider error bodies are
-        # deliberately excluded because the UI persists these records in chats.
+        # Persist usage metadata only, never prompts, keys or raw provider errors.
         self.request_metrics: list[dict[str, Any]] = []
         self.metrics_callback: Callable[[list[dict[str, Any]]], None] | None = None
         self._active_metric: dict[str, Any] | None = None
@@ -202,9 +201,7 @@ class GemmaClient:
                     self._active_metric["failure_kind"] = "network"
             except (json.JSONDecodeError, UnicodeDecodeError):
                 raise ModelError("The provider returned an unreadable response. Retry the request.", attempts=attempt) from None
-            # Retry only inference HTTP requests. Tool execution is outside this
-            # adapter, so a retried synthesis request cannot repeat a crew write.
-            # A 429 can mean a depleted daily free quota: leave that to the user.
+            # Only inference is retried, never tool writes. HTTP 429 is not transient.
             delay = (0.8 * 2 ** (attempt - 1)) + random.uniform(0.0, 0.25)
             remaining = deadline - time.monotonic()
             if transient and attempt < max_attempts and remaining > delay + 0.1:
@@ -240,8 +237,7 @@ class GemmaClient:
             try:
                 self.metrics_callback(deepcopy(self.request_metrics))
             except Exception:
-                # A progress display must never break a model response or a
-                # grounded local fallback. The persisted metrics remain usable.
+                # Telemetry callbacks must not interrupt an answer or local fallback.
                 pass
 
     def _count_google_tokens(self, payload: dict) -> tuple[int | None, str | None]:
@@ -263,7 +259,6 @@ class GemmaClient:
             method="POST",
         )
         try:
-            # A single bounded metadata request: no inference retry loop here.
             with urlopen(request, timeout=min(self.timeout, 10)) as response:
                 result = json.loads(response.read(1_000_000).decode("utf-8"))
             count = self._token_count(result.get("totalTokens")) if isinstance(result, dict) else None

@@ -23,8 +23,7 @@ _FIELD_ALIASES = {
     "spill_area_pct": r"(?:spill_area_pct|spill\s+area(?:\s+(?:percentage|percent))?)",
     "spill_est_volume_bbl": r"(?:spill_est_volume_bbl|spill\s+(?:estimated\s+)?volume)",
 }
-# A numeric field value must finish here. In particular, do not take the first
-# number from an alternative ("41 or 42"), range, exponent or unsupported unit.
+# Reject partial values such as "41 or 42", ranges, exponents and unsupported units.
 _VALUE_END = r"(?=$|[.!;,](?!\d)|\n|\s+(?:because|due\s+to|for|and|reason\b|preserving|based\s+on)\b)"
 _COMMAND = r"(?:correct|set|change|save|record|update|apply)"
 _NEGATED_WRITE = re.compile(
@@ -49,8 +48,7 @@ def _reason(text: str) -> str | None:
     match = re.search(r"\b(?:because|due\s+to|reason\s*:)\s*(.+)", text, re.I | re.S)
     if not match:
         return None
-    # Sentence boundaries require following whitespace, so decimal readings
-    # such as 41.0 are not cut in half.
+    # Whitespace after punctuation keeps decimal readings intact.
     reason = re.split(r"(?<=[.!?;])\s+|\n", match[1], maxsplit=1)[0].strip()
     return reason if len(reason.strip(" .;:")) >= 3 else None
 
@@ -109,8 +107,7 @@ def parse_explicit_correction(text: str) -> dict | None:
             rf"(?:(?:for|in|on)\s+(?:inspection\s+)?{_INSPECTION_ID}\s*)?"
         )
         coordinated_prefix = rf"(?:\band\b|,)\s+(?:the\s+)?{alias}\s*"
-        # Cover even malformed additional assignments. A valid first field
-        # never licenses silently dropping a second, incomplete correction.
+        # A valid assignment must not hide a second, malformed correction.
         assignment_spans = [match.span() for match in re.finditer(
             rf"(?:{target_prefix}|{coordinated_prefix})(?:to|=|from)\s*|"
             rf"\b(?:save|record|use|apply)\s+[^\n!?;]{{1,160}}?\s+as\s+"
@@ -125,15 +122,13 @@ def parse_explicit_correction(text: str) -> dict | None:
             # Correct wellhead temperature from 24 C to 41 C.
             rf"{target_prefix}from\s+(?P<old_value>{_NUMBER})"
             rf"(?:\s*(?P<old_unit>{_UNIT}))?\s+to\s+{_VALUE}{_VALUE_END}",
-            # Also detect a second coordinated target, so it is never ignored.
             rf"{coordinated_prefix}(?:to|=)\s*{_VALUE}{_VALUE_END}",
         ]
         for pattern in patterns:
             for match in re.finditer(pattern, plain, re.I):
                 value = _typed_value(field, match["value"], match["unit"])
                 if value is None:
-                    # An explicitly assigned but unsupported value disqualifies
-                    # the request, even if another assignment was parseable.
+                    # Do not silently drop unsupported assignments.
                     return None
                 if "old_value" in match.groupdict() and _typed_value(field, match["old_value"], match["old_unit"]) is None:
                     return None
