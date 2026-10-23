@@ -6,7 +6,6 @@ import copy
 import json
 from pathlib import Path
 import shutil
-import sqlite3
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -15,7 +14,7 @@ from copilot.agent import Copilot, INSTRUCTIONS, MAX_RECENT_HISTORY_CHARS, MAX_T
 from copilot.config import Settings
 from copilot.db import connect
 from copilot.ingest import import_dataset
-from copilot.model import GemmaClient, ModelError, ModelReply
+from copilot.model import OpenRouterClient, ModelError, ModelReply
 
 
 class ScriptedClient:
@@ -42,8 +41,9 @@ class MeteredClient(ScriptedClient):
         self.metrics_callback = None
 
     def complete(self, messages, definitions):
-        metric = {"provider": "google", "model": "gemma-test", "input_tokens": 1000 + len(self.request_metrics) * 500,
-                  "input_token_source": "countTokens", "measured": True,
+        measured_input = 1000 + len(self.request_metrics) * 500
+        metric = {"provider": "openrouter", "model": "gemma-test", "input_tokens": None,
+                  "input_token_source": "unavailable", "measured": False,
                   "output_tokens": None, "total_tokens": None, "status": "pending"}
         self.request_metrics.append(metric)
         if self.metrics_callback:
@@ -53,8 +53,9 @@ class MeteredClient(ScriptedClient):
         except Exception:
             metric["status"] = "failed"
             raise
-        metric.update(status="completed", output_tokens=100, total_tokens=metric["input_tokens"] + 100,
-                      input_token_source="usageMetadata")
+        metric.update(status="completed", input_tokens=measured_input, measured=True,
+                      output_tokens=100, total_tokens=measured_input + 100,
+                      input_token_source="provider_usage")
         return reply
 
 
@@ -76,14 +77,7 @@ class AgentTests(unittest.TestCase):
         cls.temp.mkdir()
         cls.db = cls.temp / "copilot.sqlite3"
         project = Path(__file__).resolve().parents[1]
-        existing = project / "data/copilot.sqlite3"
-        if existing.exists():
-            with closing(connect(existing)) as source, closing(sqlite3.connect(cls.db)) as destination:
-                source.backup(destination)
-            with closing(connect(cls.db)) as conn:
-                cls.dataset_id = conn.execute("SELECT dataset_id FROM wells WHERE asset_id='WELL-0001' LIMIT 1").fetchone()[0]
-        else:
-            cls.dataset_id = import_dataset(project / "challenge-dataset/sample-data", cls.db)["dataset_id"]
+        cls.dataset_id = import_dataset(project / "challenge-dataset/sample-data", cls.db)["dataset_id"]
         cls.settings = Settings(db_path=str(cls.db), field_timezone="UTC", max_tool_rounds=4)
         Copilot(cls.db, cls.dataset_id, "U-201", cls.settings)
 
@@ -145,21 +139,22 @@ class AgentTests(unittest.TestCase):
         self.assertEqual([m["input_tokens"] for m in result["token_usage"]], [1000, 1500])
         self.assertEqual([m["status"] for m in result["token_usage"]], ["completed", "completed"])
         self.assertEqual(notifications[0][0]["status"], "pending")
-        self.assertEqual(notifications[0][0]["input_token_source"], "countTokens")
+        self.assertIsNone(notifications[0][0]["input_tokens"])
+        self.assertEqual(notifications[0][0]["input_token_source"], "unavailable")
         with closing(connect(self.db)) as conn:
             saved = json.loads(conn.execute("SELECT payload_json FROM chat_messages WHERE role='assistant' ORDER BY message_id DESC LIMIT 1").fetchone()[0])
         self.assertEqual(saved["token_usage"], result["token_usage"])
 
-    def test_counted_input_survives_generation_failure_without_fabricated_output(self):
+    def test_failed_generation_keeps_usage_unknown_without_fabricated_output(self):
         client = MeteredClient(ModelError("Provider failed."))
         result = self.copilot(client).respond("Hello.", "metered-failure")
         self.assertTrue(result["error"])
-        self.assertEqual(result["token_usage"][0]["input_tokens"], 1000)
+        self.assertIsNone(result["token_usage"][0]["input_tokens"])
         self.assertEqual(result["token_usage"][0]["status"], "failed")
         self.assertIsNone(result["token_usage"][0]["output_tokens"])
 
     def test_unsupported_oil_volume_question_uses_no_model_client(self):
-        with patch("copilot.agent.GemmaClient", side_effect=AssertionError("Unsupported measured volume needs no model")) as constructor:
+        with patch("copilot.agent.OpenRouterClient", side_effect=AssertionError("Unsupported measured volume needs no model")) as constructor:
             result = self.copilot().respond("Which well produced the most oil in 2026?", "missing-production-volume")
         constructor.assert_not_called()
         self.assertEqual(result["capability_limit"], "measured_oil_production_volume_unavailable")
@@ -176,7 +171,7 @@ class AgentTests(unittest.TestCase):
                   "Ambient temperature remains 19.9°C. Keep Tyler Hughes’s “Pump jack not moving” note "
                   "and flag its disagreement with the corrected reading.")
         copilot = self.copilot()
-        with patch("copilot.agent.GemmaClient", side_effect=AssertionError("No model is needed for an explicit draft")):
+        with patch("copilot.agent.OpenRouterClient", side_effect=AssertionError("No model is needed for an explicit draft")):
             result = copilot.respond(prompt, "explicit-draft")
         self.assertEqual(result["write_status"], "pending_confirmation")
         self.assertEqual(result["token_usage"], [])
@@ -198,7 +193,7 @@ class AgentTests(unittest.TestCase):
 
     def test_write_failure_after_reads_reports_unsaved_instead_of_status_fallback(self):
         client = ScriptedClient(call("get_well", {"asset_id": "WELL-0164"}),
-                                ModelError("Google HTTP 500 INTERNAL", status_code=500, retryable=True))
+                                ModelError("OpenRouter HTTP 500", status_code=500, retryable=True))
         result = self.copilot(client).respond("Please correct the latest WELL-0164 reading; the thermal gun was faulty.", "write-read-failure")
         self.assertEqual(result["write_status"], "not_saved")
         self.assertIn("No shared update was saved", result["answer"])
@@ -221,7 +216,7 @@ class AgentTests(unittest.TestCase):
     def test_explicit_correction_rejects_a_different_named_well(self):
         prompt = ("Please correct inspection INS-0164-0205 for WELL-0001. "
                   "Set wellhead temperature to 41.0°C because the thermal gun was faulty.")
-        with patch("copilot.agent.GemmaClient", side_effect=AssertionError("Invalid draft must not reach a provider")):
+        with patch("copilot.agent.OpenRouterClient", side_effect=AssertionError("Invalid draft must not reach a provider")):
             result = self.copilot().respond(prompt, "mismatched-well")
         self.assertEqual(result["write_status"], "not_saved")
         self.assertIn("does not match", result["answer"])
@@ -643,32 +638,28 @@ class AgentTests(unittest.TestCase):
         self.assertIn("qualified-person verification", INSTRUCTIONS)
         self.assertIn("Never guess/expose others' history", INSTRUCTIONS)
 
-    def test_google_parallel_function_responses_pair_ids_and_names(self):
-        messages = [{"role": "system", "content": "Policy"}, {"role": "user", "content": "Two tools"},
-                    {"role": "assistant", "google_parts": [
-                        {"functionCall": {"id": "g1", "name": "get_well", "args": {"asset_id": "WELL-0001"}}},
-                        {"functionCall": {"id": "g2", "name": "get_document", "args": {"path": "fleet/well-types/T200.md"}}}]},
-                    {"role": "tool", "name": "get_well", "provider_id": "g1", "content": "{}"},
-                    {"role": "tool", "name": "get_document", "provider_id": "g2", "_consecutive_tool": True, "content": "{}"}]
-        instructions, contents = GemmaClient._google_contents(messages)
-        self.assertEqual(instructions, "Policy")
-        self.assertEqual([part["functionResponse"]["id"] for part in contents[-1]["parts"]], ["g1", "g2"])
-        self.assertEqual([part["functionResponse"]["name"] for part in contents[-1]["parts"]], ["get_well", "get_document"])
-        self.assertEqual(contents[-1]["role"], "user")
+    def test_parallel_openrouter_tool_responses_pair_ids_and_names(self):
+        calls = [{"id": "read-a", "name": "get_well", "arguments": {"asset_id": "WELL-0001"}},
+                 {"id": "read-b", "name": "get_document", "arguments": {"path": "fleet/well-types/T200.md"}}]
+        reply = ModelReply(calls=calls, assistant_message={"role": "assistant", "content": "", "tool_calls": [
+            {"id": call["id"], "type": "function", "function": {"name": call["name"], "arguments": json.dumps(call["arguments"])}}
+            for call in calls]})
+        client = ScriptedClient(reply, answer("Read the well and manual. [S1]"))
+        self.copilot(client).respond("Read WELL-0001 and its operating manual.", "parallel-openrouter")
+        responses = [message for message in client.requests[1][0] if message["role"] == "tool"]
+        self.assertEqual([message["tool_call_id"] for message in responses], ["read-a", "read-b"])
+        self.assertEqual([message["name"] for message in responses], ["get_well", "get_document"])
 
-    def test_google_uses_json_schema_for_nullable_tool_parameters(self):
-        client = GemmaClient("offline-test-key", provider="google")
+    def test_openrouter_preserves_nullable_tool_json_schemas(self):
+        client = OpenRouterClient("offline-test-key")
         definitions = self.copilot().tools.tool_definitions()
-        with patch.object(client, "_post_json", return_value={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}) as post, \
-                patch.object(client, "_count_google_tokens", return_value=(None, "disabled in offline test")):
+        with patch.object(client, "_post_json", return_value={"choices": [{"message": {"content": "ok"}}]}) as post:
             reply = client.complete([{"role": "system", "content": "Policy"}, {"role": "user", "content": "Hello"}], definitions)
         self.assertEqual(reply.content, "ok")
-        payload = post.call_args.args[2]
-        google_definitions = payload["tools"][0]["functionDeclarations"]
-        by_name = {definition["name"]: definition for definition in google_definitions}
-        self.assertNotIn("parameters", by_name["correct_inspection"])
-        self.assertEqual(by_name["correct_inspection"]["parametersJsonSchema"]["properties"]["value"]["type"], ["number", "boolean", "null"])
-        self.assertEqual(by_name["add_shared_note"]["parametersJsonSchema"]["properties"]["valid_to"]["type"], ["string", "null"])
+        payload = post.call_args.args[0]
+        by_name = {item["function"]["name"]: item["function"] for item in payload["tools"]}
+        self.assertEqual(by_name["correct_inspection"]["parameters"]["properties"]["value"]["type"], ["number", "boolean", "null"])
+        self.assertEqual(by_name["add_shared_note"]["parameters"]["properties"]["valid_to"]["type"], ["string", "null"])
 
 
 if __name__ == "__main__":

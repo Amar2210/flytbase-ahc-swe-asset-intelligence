@@ -1,6 +1,6 @@
 # Asset Intelligence Copilot
 
-A chat copilot for oil-field inspection teams, built with Python, Streamlit, SQLite and Gemma. It answers questions from inspection records, maintenance reports, operating procedures and crew notes.
+A chat copilot for oil-field inspection teams, built with Python, Streamlit, SQLite and Gemma through OpenRouter. It answers questions from inspection records, maintenance reports, operating procedures and crew notes.
 
 The copilot shares well updates across users and keeps each user's conversations and preferences private. Original records remain available after a correction.
 
@@ -22,7 +22,7 @@ git clone https://github.com/FlytBaseAILabs/flytbase-ahc-swe-asset-intelligence-
 ```
 
 Skip the clone if `challenge-dataset/` already exists. Copy `.env.example` to
-`.env`, set `GOOGLE_API_KEY`, and start the app:
+`.env`, set `OPENROUTER_API_KEY`, and start the app:
 
 ```bash
 python -m streamlit run app.py
@@ -42,7 +42,7 @@ COPILOT_REPORT_DATE=2027-01-15
 ```
 
 Private conversation dates always use the real clock. The report date affects
-operational relative dates only. See `.env.example` for provider, token-budget
+operational relative dates only. See `.env.example` for OpenRouter, request-size
 and storage settings.
 
 ## Tests
@@ -59,7 +59,7 @@ an API key. The crew selector is a demo identity mechanism, not authentication.
 
 ## Documentation
 
-- **[Project report](report.md)** — system design, rate limits, optimization, and before/after screenshots.
+- **[Historical project report](report.md)** — the earlier design, failure analysis, optimization, and before/after screenshots.
 - **[Architecture](docs/architecture.md)** — module guide, request flow, safety boundaries and current limits.
 - **[Database and memory schema](docs/application-schema.md)** — SQLite tables and their relationships.
 - **[Source data map](docs/data-map.md)** — sample dataset fields, joins and domain rules.
@@ -75,8 +75,7 @@ flowchart TD
     UI --> Agent["Python agent: dataset, user and conversation scope"]
     Agent --> Context["Build bounded context and select relevant tools"]
     DB -->|"Scoped history, preferences and records"| Context
-    Context --> Budget["Google token count and shared TPM queue"]
-    Budget --> Model["Gemma through Google AI Studio"]
+    Context --> Model["Gemma through OpenRouter: bounded chat-completions requests"]
     Model -->|"Read requests"| Read["Python tools: SQL, document search, recall and spill checks"]
     Read -->|"Read selected records"| DB
     Read -->|"Selected evidence and sources"| Context
@@ -102,6 +101,26 @@ flowchart TD
 
 **Model calls:** Complete recall and spill checks normally need two rounds. Other requests can use up to three. Fully specified corrections and unsupported production-volume questions can use local paths without model generation.
 
-**Rate control:** A persistent ledger coordinates Google input tokens across app users and conversations. The configured 16,000 TPM allowance uses a 14,500-token working budget, plus conservative reservations for each attempt. Requests wait when the budget is full. External requests from other programs remain outside this ledger.
+**Request control:** There is no local token scheduler or database-backed wait queue. OpenRouter/upstream limits still apply. A real HTTP 429 returns a sanitized error after one attempt, without automatic retry. Transient network/server errors have up to three attempts inside the configured request timeout. The input-size guard estimates tokens from UTF-8 message/tool JSON bytes divided by four; it is not an exact tokenizer or quota meter. Actual usage is shown only when returned by OpenRouter.
 
 **Data limits:** Temperature readings classify production status; they do not measure oil volume. The copilot states missing evidence rather than inventing a production ranking. The current retrieval uses SQL and keyword search; it has no vector or graph database.
+
+## OpenRouter-only upgrade
+
+`OPENROUTER_API_KEY` and `COPILOT_MODEL` retain their existing names. The default
+OpenRouter model remains `google/gemma-4-31b-it:free`; the `google/` prefix names
+the model author, not another provider connection. Existing free Gemma model
+choices remain supported. No live model availability or latency is guaranteed.
+
+Provider selection and the old Google credential/TPM settings are no longer used.
+Legacy `COPILOT_PROVIDER`, `GOOGLE_API_KEY`, `GEMINI_API_KEY` and
+`COPILOT_GOOGLE_*` values are ignored. If upgrading a Google-only local setup,
+set `OPENROUTER_API_KEY` and an OpenRouter model slug yourself; this change does
+not edit your private `.env` or transfer credentials.
+
+On the next normal application initialization, the migration drops only
+`model_token_reservations` and `model_rate_limit_cooldowns` (and their own indexes).
+It discards obsolete scheduling state, not field evidence, chats, preferences,
+replacement reports, corrections or pending updates. The migration is idempotent
+and handles either old table being absent. Development tests use isolated
+public fixtures; they do not open or migrate the live application database.

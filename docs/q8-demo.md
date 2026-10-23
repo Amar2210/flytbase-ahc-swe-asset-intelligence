@@ -21,6 +21,8 @@ make “yesterday” in turn 1 mean **14 January 2027**. Private conversation-hi
 dates still use the real clock in the configured field timezone. They are not
 shifted into January 2027.
 
+**Historical provider check (not the current OpenRouter-only route):**
+
 The local Google route was configured with `gemma-4-26b-a4b-it` after the 31B
 route returned HTTP 500 errors. The first write below was verified with a real
 Gemma 26B response. Model availability can vary; a provider error does not save
@@ -120,6 +122,8 @@ SQLite tools and confirmation writes, and scripted model tool selections. Those
 tests also verify that hearsay cannot be staged as a direct report, a read
 question cannot authorize preference writes, other users do not inherit Nathan's
 private preferences, and original maintenance records remain unchanged.
+
+The live-provider check described below belongs to the historical Google route; no live OpenRouter request was made for this upgrade.
 
 Only the **first write** has been verified through a live Gemma 26B call. The
 offline tests do not prove that every live model response will select the correct

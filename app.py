@@ -221,45 +221,25 @@ def _render_token_usage(metrics: list[dict]) -> None:
     if measured and len(measured) < len(records):
         sum_value += " + unknown"
     sum_column.metric("Input across rounds", sum_value)
-    latest_record = records[-1]
-    if latest_record.get("rate_limit_status") == "queued":
-        waited = float(latest_record.get("rate_limit_wait_seconds") or 0)
-        st.info(f"Waiting for the local Google TPM budget · {waited:.0f} seconds waited. The next generation request has not been sent.")
-    pacing = [item for item in records if known(item.get("rate_limit_budget_tokens"))]
-    if pacing:
-        pacing_record = pacing[-1]
-        wait_seconds = sum(float(item.get("rate_limit_wait_seconds") or 0) for item in pacing)
-        st.caption(f"Local Google input budget: {pacing_record['rate_limit_budget_tokens']:,} of {pacing_record.get('rate_limit_limit_tokens', pacing_record['rate_limit_budget_tokens']):,} tokens per 60 seconds · queue wait across this question: {wait_seconds:.1f} seconds. Reservations include a safety margin.")
     with st.expander("Context token details"):
         st.caption("Input context is the size of one model request, not the sum across rounds. It includes system instructions, database schema, private history, tool definitions and tool results. SOP text is included when retrieved.")
-        st.caption("Input across rounds adds the known context sizes for this question. It excludes repeat HTTP attempts and can include a request blocked before generation. It is not a live TPM meter or billed usage.")
+        st.caption("Actual token counts are known only when OpenRouter returns usage. Missing usage is unavailable, never zero. Input across rounds sums returned counts; it is not a live quota meter or a billing total and excludes unknown/repeated failed HTTP attempts.")
         display = []
         for index, item in enumerate(records, 1):
             display.append({"Call": index, "Provider": item.get("provider"), "Model": item.get("model"),
                             "Input tokens": item.get("input_tokens"), "Count source": item.get("input_token_source", "unavailable"),
-                            "Input budget": item.get("input_token_budget"),
+                            "Input estimate (not measured)": item.get("input_token_estimate"),
+                            "Input size (UTF-8 bytes)": item.get("input_size_bytes"),
                             "Output tokens": item.get("output_tokens"), "Total tokens": item.get("total_tokens"),
                             "Generation HTTP attempts": item.get("inference_http_attempts"),
-                            "TPM queue": item.get("rate_limit_status"),
-                            "TPM wait seconds": item.get("rate_limit_wait_seconds"),
-                            "Local window reserved": item.get("rate_limit_window_reserved_tokens"),
-                            "Reserved this attempt": item.get("rate_limit_reserved_tokens"),
-                            "Local TPM budget": item.get("rate_limit_budget_tokens"),
-                            "Status": item.get("status"), "Failure": item.get("failure_kind"),
-                            "Count issue": item.get("count_error")})
+                            "Status": item.get("status"), "Failure": item.get("failure_kind")})
         st.dataframe(pd.DataFrame(display), hide_index=True, width="stretch")
-        st.caption("Google token counting adds one countTokens request per model call. Generation retries reuse that count. A missing count is shown as unavailable, never zero.")
-        st.caption("At most three model rounds per question. HTTP retries are separate attempts within a round. The input budget limits one measured Google request; these counters are saved measurements, not live TPM usage.")
-        if pacing:
-            st.caption("The shared local ledger reserves input before every Google generation attempt, including retries. It covers this app's users and conversations for the configured project label and model. It cannot see AI Studio or other programs using the same Google project.")
+        st.caption("The local request-size estimate uses four UTF-8 bytes per token, not a model tokenizer. It can over- or underestimate the actual context; OpenRouter enforces the model's real context limit. At most three model rounds run per question, with bounded HTTP retries inside a round.")
         output = [item["output_tokens"] for item in records if known(item.get("output_tokens"))]
         if output:
-            st.caption(f"Known output usage: {sum(output):,} tokens across {len(output)} of {len(records)} calls. Provider billing is only known where returned by the provider.")
+            st.caption(f"Known output usage: {sum(output):,} tokens across {len(output)} of {len(records)} calls. Token counts alone do not establish billed cost.")
         else:
-            st.caption("Output usage and billing are unavailable until returned by the provider. Preflight context counts do not establish billed usage.")
-        errors = list(dict.fromkeys(_safe_error(ValueError(item["count_error"])) for item in records if item.get("count_error")))
-        for error in errors:
-            st.caption(error)
+            st.caption("Output usage is unavailable until returned by OpenRouter.")
 
 
 def _render_message(message: dict) -> None:
@@ -401,7 +381,7 @@ def _chat(settings: Settings, dataset: dict, user_id: str, session_id: str) -> N
 
     _pending_controls(copilot, st.session_state.get(pending_key), session_id, pending_key)
     if not settings.api_key:
-        st.info("Set the provider API key in the local .env file and reload the app to enable chat. Dataset import and the data browser remain available.")
+        st.info("Set OPENROUTER_API_KEY in the local .env file and reload the app to enable chat. Dataset import and the data browser remain available.")
     entered = st.chat_input("Ask the field copilot, or report a well update…")
     prompt = entered or prompt
     if prompt:

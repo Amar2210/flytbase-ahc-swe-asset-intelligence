@@ -1,5 +1,7 @@
 # Field Intelligence: system design and failure report
 
+> **Historical snapshot:** The report below records the 17 October 2026 implementation and its original checks, unchanged. The current application is OpenRouter-only and has no database-backed model scheduler. Its next initialization retires the two old scheduling tables. See the [current README](README.md#openrouter-only-upgrade) and [architecture](docs/architecture.md); the historical test counts and Google-route checks below are not current verification.
+
 Prepared on **17 October 2026**. The test dataset uses **15 January 2027** as its operational date.
 
 This report uses simple technical English inspired by ASD-STE100. It does not claim formal ASD-STE100 compliance.

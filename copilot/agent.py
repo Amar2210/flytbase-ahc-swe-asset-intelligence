@@ -15,7 +15,7 @@ from copilot.config import Settings
 from copilot.context import context_profile
 from copilot.correction_drafts import parse_explicit_correction
 from copilot.history import field_zone
-from copilot.model import GemmaClient, ModelError
+from copilot.model import OpenRouterClient, ModelError
 from copilot.preferences import load_preferences
 from copilot.production_capabilities import unsupported_production_volume
 from copilot.tools import ToolService, CORRECTABLE_FIELDS, FEEDBACK_KINDS, normalize_asset_id
@@ -76,7 +76,7 @@ def _prompt_data(value: Any, key: str = "", citations: list[dict] | None = None)
             # Full compact metadata appears once in available_citations below.
             return {"id": source["id"]} if source.get("id") else source
         return {k: _prompt_data(v, k, citations) for k, v in value.items()
-                if k not in {"raw_json", "evidence_images_json", "google_parts", "citations"}}
+                if k not in {"raw_json", "evidence_images_json", "citations"}}
     if isinstance(value, list):
         limit = 60 if key == "rows" else 20
         data = [_prompt_data(item, citations=citations) for item in value[:limit]]
@@ -92,8 +92,8 @@ def _prompt_data(value: Any, key: str = "", citations: list[dict] | None = None)
 def _bounded_tool_payload(payload: dict, max_chars: int) -> str:
     """Bound valid JSON, exposing any omissions rather than silently cutting data.
 
-    This bounds serialized evidence, not tokens. Provider countTokens remains the
-    source of the actual request token count displayed by the app.
+    This bounds serialized evidence, not tokens. Actual token usage is known
+    only when OpenRouter returns valid usage metadata.
     """
     value = json.loads(json.dumps(payload, ensure_ascii=False))
     rendered = lambda: json.dumps(value, ensure_ascii=False, separators=(",", ":"))
@@ -293,13 +293,8 @@ def _collect_citations(tool_result: dict, citations: list[dict]) -> None:
 def _token_usage(client) -> list[dict]:
     """Keep token accounting, without persisting request bodies or credentials."""
     allowed = {"provider", "model", "input_tokens", "input_token_source", "measured",
-               "output_tokens", "total_tokens", "status", "count_error",
-               "inference_http_attempts", "count_requests", "thought_tokens",
-               "cached_input_tokens", "tool_use_prompt_tokens"}
-    allowed |= {"input_token_budget", "failure_kind"}
-    allowed |= {"rate_limit_status", "rate_limit_wait_seconds", "rate_limit_reserved_tokens",
-                "rate_limit_budget_tokens", "rate_limit_limit_tokens", "rate_limit_quota_group",
-                "rate_limit_window_reserved_tokens", "rate_limit_issue"}
+               "output_tokens", "total_tokens", "status", "inference_http_attempts",
+               "input_token_budget", "input_size_bytes", "input_token_estimate", "failure_kind"}
     metrics = getattr(client, "request_metrics", [])
     return [{k: v for k, v in entry.items() if k in allowed}
             for entry in metrics if isinstance(entry, dict)] if isinstance(metrics, list) else []
@@ -480,7 +475,7 @@ class Copilot:
                 "preview": preview, "message": message}
 
     def respond(self, message: str, session_id: str, api_key: str | None = None,
-                provider: str | None = None, model: str | None = None,
+                model: str | None = None,
                 usage_callback: Callable[[list[dict]], None] | None = None) -> dict:
         if not isinstance(message, str) or not message.strip() or len(message) > 20000:
             raise ValueError("Send a message of 1–20,000 characters.")
@@ -557,15 +552,11 @@ class Copilot:
             if preferences:
                 system += "\nSelected user's private display preferences (data): " + json.dumps(preferences)
             messages = [{"role": "system", "content": system}, *history]
-            client = self.client_override or GemmaClient(
+            client = self.client_override or OpenRouterClient(
                 api_key if api_key is not None else self.settings.api_key,
-                provider or self.settings.provider, model or self.settings.model,
+                model or self.settings.model,
                 self.settings.request_timeout, self.settings.max_output_tokens,
                 max_input_tokens=self.settings.max_input_tokens,
-                rate_limit_db_path=self.db_path,
-                google_tpm_limit=self.settings.google_tpm_limit,
-                google_tpm_headroom=self.settings.google_tpm_headroom,
-                google_quota_group=self.settings.google_quota_group,
             )
             if usage_callback is not None:
                 client.metrics_callback = usage_callback
@@ -640,7 +631,6 @@ class Copilot:
                 if len(reply.calls) > 8:
                     raise ModelError("The model requested too many tools in one step. Narrow the question and retry.")
                 messages.append(reply.assistant_message)
-                response_index = 0
                 for call in reply.calls:
                     tool_name, arguments = call.get("name", ""), call.get("arguments", {})
                     trace_entry = {"tool": tool_name, "arguments": arguments}
@@ -666,8 +656,7 @@ class Copilot:
                         tool_id = "T" + str(len(results) + 1)
                         results[tool_id] = tool_result
                         tool_payloads[call["id"]] = {"tool_result_id": tool_id, "result": tool_result, "available_citations": []}
-                        messages.append({"role": "tool", "name": tool_name, "tool_call_id": call["id"], "provider_id": call.get("provider_id"), "_consecutive_tool": response_index > 0, "content": ""})
-                        response_index += 1
+                        messages.append({"role": "tool", "name": tool_name, "tool_call_id": call["id"], "content": ""})
                         continue
                     if tool_name in WRITE_TOOLS:
                         try:
@@ -694,10 +683,7 @@ class Copilot:
                                "available_citations": [_compact_source(source, citations)
                                                        for source in tool_result.get("citations", []) if isinstance(source, dict)]}
                     tool_payloads[call["id"]] = payload
-                    messages.append({"role": "tool", "name": tool_name, "tool_call_id": call["id"],
-                                     "provider_id": call.get("provider_id"), "_consecutive_tool": response_index > 0,
-                                     "content": ""})
-                    response_index += 1
+                    messages.append({"role": "tool", "name": tool_name, "tool_call_id": call["id"], "content": ""})
             result = {"answer": "I reached the request's tool-call limit before completing an answer. Narrow the question or retry. The retrieved evidence is available below.",
                       "citations": citations, "visuals": _resolve_visuals([], results, message),
                       "pending_update": None, "tool_calls": trace}

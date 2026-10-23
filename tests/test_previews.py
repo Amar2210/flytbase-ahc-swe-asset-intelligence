@@ -18,13 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 class PreviewTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.database = ROOT / "data" / ("preview-test-" + uuid4().hex + ".sqlite3")
-        existing = ROOT / "data/copilot.sqlite3"
-        if existing.is_file():
-            with closing(connect(existing)) as source, closing(connect(cls.database)) as destination:
-                source.backup(destination)
-        else:
-            import_dataset(ROOT / "challenge-dataset/sample-data", cls.database, "Preview test")
+        cls.database = ROOT / "tests" / "data" / ("preview-test-" + uuid4().hex + ".sqlite3")
+        import_dataset(ROOT / "challenge-dataset/sample-data", cls.database, "Preview test")
         with closing(connect(cls.database)) as conn, conn:
             cls.dataset_id, cls.user_id = conn.execute("SELECT dataset_id,user_id FROM users LIMIT 1").fetchone()
             conn.execute("DELETE FROM corrections")
@@ -41,7 +36,7 @@ class PreviewTests(unittest.TestCase):
             before = {table: conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
                       for table in ("chat_messages", "context_notes", "corrections")}
         with patch("copilot.model.urlopen", side_effect=AssertionError("No provider calls permitted")) as network, \
-                patch("copilot.agent.GemmaClient", side_effect=AssertionError("No model clients permitted")) as client:
+                patch("copilot.agent.OpenRouterClient", side_effect=AssertionError("No model clients permitted")) as client:
             for kind in PREVIEW_LABELS:
                 with self.subTest(kind=kind):
                     result = build_preview(self.tools, kind, asset_id="WELL-0001")

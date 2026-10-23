@@ -84,6 +84,11 @@ def initialize(db_path: str | Path) -> None:
                 updated_at TEXT NOT NULL, source_message_id INTEGER,
                 PRIMARY KEY(dataset_id,user_id));
         """)
+        # Retire only obsolete local scheduler state. SQLite drops these tables'
+        # own indexes with them; all operational/private tables stay untouched.
+        # This is safe for fresh, partial-upgrade and already-upgraded databases.
+        conn.execute("DROP TABLE IF EXISTS model_token_reservations")
+        conn.execute("DROP TABLE IF EXISTS model_rate_limit_cooldowns")
         # Additive migration: a tag classifies a typed correction, never accepts it.
         if "feedback_kind" not in {row[1] for row in conn.execute("PRAGMA table_info(corrections)")}:
             conn.execute("ALTER TABLE corrections ADD COLUMN feedback_kind TEXT")

@@ -1,7 +1,7 @@
 # Architecture
 
 One Streamlit application and one SQLite database store source evidence, shared
-updates, private memory and API scheduling state. No separate API server, vector
+updates and private memory. OpenRouter is the only model provider. No separate API server, vector
 database or graph service is required.
 
 See the [system diagram](../README.md#system-architecture),
@@ -15,7 +15,7 @@ optimization results and screenshots.
 | --- | --- |
 | `app.py` | Dataset imports, user/conversation selection, chat, evidence, token metrics and visual previews |
 | `copilot/config.py` | Local `.env` settings with process-environment precedence; secrets stay out of persisted payloads |
-| `copilot/db.py` | Source and memory schema, connection setup and additive migrations |
+| `copilot/db.py` | Source/memory schema, connection setup and narrowly scoped migrations |
 | `copilot/ingest.py` | Validated, atomic folder/ZIP imports with content-derived dataset IDs |
 | `copilot/agent.py` | Bounded model loop, private history, citations, backend-sourced visuals and reviewed updates |
 | `copilot/context.py` | Select a smaller tool catalogue and include SQL schema only when needed |
@@ -25,8 +25,7 @@ optimization results and screenshots.
 | `copilot/preferences.py` | Enum-valued display preferences scoped to a dataset and user |
 | `copilot/correction_drafts.py` | Conservative local extraction of fully specified correction proposals |
 | `copilot/production_capabilities.py` | Local check for missing oil-production volume measurements |
-| `copilot/model.py` | Google/OpenRouter REST adapters, token counts, usage metrics and bounded retries |
-| `copilot/rate_limits.py` | Persistent, shared Google input-token reservations and cooldowns |
+| `copilot/model.py` | OpenRouter chat-completions transport, returned usage metrics, request-size guard and bounded retries |
 | `copilot/previews.py` | Six explicit read-only chart/table presets, without model calls or chat writes |
 
 ## Import and evidence
@@ -41,7 +40,7 @@ Original JSON, document bodies, source paths and available line numbers remain i
 SQLite. Uploaded evidence survives temporary extraction-directory cleanup.
 
 Structured reads use an in-memory snapshot of the selected dataset's public
-tables. Private chats, preferences, review state, token ledgers and other datasets
+tables. Private chats, preferences, review state and other datasets
 are never copied. A SQLite authorizer, function allowlist, execution budget and
 300-row output cap constrain generated SQL. Aggregation runs before that cap.
 
@@ -65,7 +64,8 @@ never model-supplied data arrays.
    Preserve the current prompt up to the 20,000-character input limit; disclose
    omitted history and use scoped history search for earlier discussions.
 3. Add instructions, dates, allowed preferences and the selected tool catalogue.
-4. Count the complete Google generation input and reserve the shared TPM budget.
+4. Encode the messages/tool schemas in OpenRouter format, check the rough local
+   request-size budget, and send a bounded generation request.
 5. Execute requested tools, collect server-issued citations and append bounded
    evidence. Each result has an 8,000-character limit and all results share a
    12,000-character budget. Full results remain server-side for the UI.
@@ -78,18 +78,32 @@ review. An unsupported oil-volume question can return a sourced data-limit answe
 without generation. Provider failures may display clearly marked partial read
 results; they never count as a saved operational update.
 
-Google `countTokens` measures the complete request, including instructions and
-tools. Returned usage supersedes preflight counts when available. Unknown counts
-remain unavailable, never zero; with shared pacing enabled they block generation.
-The default per-request input limit is 12,000 tokens, separate from TPM.
+OpenRouter returns actual input/output usage after generation when available.
+Missing or invalid usage stays unavailable, never invented zero. There is no
+separate tokenizer request. `COPILOT_MAX_INPUT_TOKENS` retains its name and
+12,000 default as a rough byte-based input-size guard: the UTF-8 JSON size of
+messages and tool definitions divided by four, rounded up. This can under- or
+overestimate real model tokens; it is not exact preflight enforcement. The API
+remains authoritative for model context limits. Output generation remains
+bounded by `COPILOT_MAX_OUTPUT_TOKENS`.
 
-The local rolling 60-second ledger shares a 14,500-token working budget under the
-configured 16,000 TPM allowance. Each generation attempt, including retries,
-reserves `ceil(input_tokens × 1.10) + 64`. Failed attempts retain reservations until
-expiry. Queue waits are bounded to 180 seconds and do not consume the generation
-timeout. Transient inference errors allow up to three HTTP attempts; HTTP 429
-creates a shared cooldown without automatic retry. The ledger cannot observe
-requests from other programs or establish remaining provider quota.
+Transient inference errors allow at most three HTTP attempts inside the original
+5–180-second clamped timeout. HTTP 429 is returned promptly after one attempt,
+with sanitized guidance, not automatically retried. There is no local rolling
+TPM ledger, reservation, queue wait or persisted cooldown. Provider/account and
+upstream limits still apply.
+
+### Upgrade behaviour
+
+The next `db.initialize` removes only `model_token_reservations` and
+`model_rate_limit_cooldowns`; their owned indexes disappear with them. Fresh,
+partial and repeated upgrades preserve all other rows and saved payloads. The
+development checks do not run this migration against the live database.
+
+Keep `OPENROUTER_API_KEY` and `COPILOT_MODEL`. Legacy provider-selection and
+Google-specific credential/TPM variables are ignored. The existing OpenRouter
+free Gemma default is unchanged. Application provider settings are independent
+of the coding assistant's global Pi configuration.
 
 ## Memory and writes
 

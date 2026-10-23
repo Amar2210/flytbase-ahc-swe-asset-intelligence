@@ -1,18 +1,20 @@
 # SQLite schema: source records and memory
 
-Updated 17 October 2026. All application records below use the same SQLite file, `data/copilot.sqlite3`.
+Updated 23 October 2026. The application defines 17 tables, 176 declared columns, and 15 declared foreign keys in the same SQLite file, `data/copilot.sqlite3`.
 This chart shows the main tables and selected fields. It is an application schema, not the source-file inventory.
 
 - **Shared memory:** `context_notes`, `corrections`, and `equipment_replacement_reports`.
 - **Private memory:** `chat_messages` and `user_preferences`.
 - **Review state:** `pending_updates`. A shared proposal is not an accepted fact before confirmation.
 - **Original evidence:** `inspections`, `maintenance`, and the other imported source tables.
-- **Local API control:** `model_token_reservations` and `model_rate_limit_cooldowns` coordinate token use.
 
 Every source or memory relationship also uses `dataset_id`, even when the line label shows only the record ID.
 Private reads additionally require the selected `user_id`; conversation reads can also require `session_id`.
-The token ledger uses provider, model and project label. It is shared across users and datasets.
-The token ledger contains no prompts, API keys or private messages.
+
+Normal initialization removes only the obsolete `model_token_reservations` and
+`model_rate_limit_cooldowns` tables and their owned indexes. This idempotent upgrade
+keeps operational records, chats, preferences, replacement reports and pending
+proposals. Development tests do not open or migrate the live database.
 
 Lines show logical joins. Most record references are checked by Python, not declared as SQLite foreign keys.
 Dataset foreign keys and the shown primary keys are declared in SQLite.
@@ -161,20 +163,6 @@ erDiagram
         TEXT status "pending, processing, saved or cancelled"
         TEXT result_json
     }
-    model_token_reservations {
-        TEXT reservation_id PK
-        TEXT provider
-        TEXT model
-        TEXT quota_group
-        REAL reserved_at
-        INTEGER tokens
-    }
-    model_rate_limit_cooldowns {
-        TEXT provider PK
-        TEXT model PK
-        TEXT quota_group PK
-        REAL until_at
-    }
 
     datasets ||--o{ areas : scopes
     datasets ||--o{ teams : scopes
@@ -212,7 +200,6 @@ erDiagram
     users ||--o| user_preferences : private_across_sessions
     chat_messages o|--o{ user_preferences : source_message_id
     users ||--o{ pending_updates : review_owner
-    model_token_reservations }o..o| model_rate_limit_cooldowns : optional_scope_cooldown
 
 ```
 
@@ -224,7 +211,7 @@ They do not replace the original inspection rows.
 
 SOPs, manuals and repair reports are records in `documents`. There is no separate SOP table.
 Document search ranks keyword matches directly from these records.
-The model-readable SQL snapshot excludes private chats, private preferences, review state and the token ledger.
+The model-readable SQL snapshot excludes private chats, private preferences and review state.
 
 ## Write behavior
 

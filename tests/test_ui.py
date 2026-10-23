@@ -88,7 +88,7 @@ class ScriptedGemma:
 class TelemetryGemma(ScriptedGemma):
     """Explicitly synthetic telemetry to test UI rendering, never token accuracy."""
 
-    preflight_notifications = []
+    progress_notifications = []
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -96,15 +96,17 @@ class TelemetryGemma(ScriptedGemma):
         self.metrics_callback = None
 
     def complete(self, messages, definitions):
-        record = {"provider": "google", "model": "gemma-test-fixture", "input_tokens": 1000 + 500 * len(self.request_metrics),
-                  "input_token_source": "countTokens", "measured": True, "output_tokens": None,
+        measured_input = 1000 + 500 * len(self.request_metrics)
+        record = {"provider": "openrouter", "model": "gemma-test-fixture", "input_tokens": None,
+                  "input_token_source": "unavailable", "measured": False, "output_tokens": None,
                   "total_tokens": None, "status": "pending"}
         self.request_metrics.append(record)
         if callable(self.metrics_callback):
-            self.preflight_notifications.append(record["input_tokens"])
+            self.progress_notifications.append(record["input_tokens"])
             self.metrics_callback(self.request_metrics)
         reply = super().complete(messages, definitions)
-        record.update(status="completed", output_tokens=20, total_tokens=record["input_tokens"] + 20)
+        record.update(status="completed", input_tokens=measured_input, measured=True,
+                      input_token_source="provider_usage", output_tokens=20, total_tokens=measured_input + 20)
         if callable(self.metrics_callback):
             self.metrics_callback(self.request_metrics)
         return reply
@@ -113,15 +115,8 @@ class TelemetryGemma(ScriptedGemma):
 class UITests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.database = ROOT / "data" / ("ui-test-" + uuid4().hex + ".sqlite3")
-        cls.database.parent.mkdir(parents=True, exist_ok=True)
-        existing = ROOT / "data/copilot.sqlite3"
-        if existing.is_file():
-            # SQLite's backup API also handles a source with an active WAL safely.
-            with closing(connect(existing)) as source, closing(connect(cls.database)) as destination:
-                source.backup(destination)
-        else:
-            import_dataset(ROOT / "challenge-dataset/sample-data", cls.database, "Sample")
+        cls.database = ROOT / "tests" / "data" / ("ui-test-" + uuid4().hex + ".sqlite3")
+        import_dataset(ROOT / "challenge-dataset/sample-data", cls.database, "Sample")
         with closing(connect(cls.database)) as connection:
             cls.dataset_id = connection.execute("SELECT dataset_id FROM datasets ORDER BY imported_at LIMIT 1").fetchone()[0]
             cls.users = [row[0] for row in connection.execute("SELECT user_id FROM users WHERE dataset_id=? ORDER BY name", (cls.dataset_id,))]
@@ -142,7 +137,7 @@ class UITests(unittest.TestCase):
         self.settings = Settings(db_path=str(self.database), api_key="ui-test-placeholder")
         ScriptedGemma.connection_calls = []
         self.configuration = patch("copilot.config.Settings.from_env", return_value=self.settings)
-        self.provider = patch("copilot.agent.GemmaClient", ScriptedGemma)
+        self.provider = patch("copilot.agent.OpenRouterClient", ScriptedGemma)
         self.network = patch("copilot.model.urlopen", side_effect=AssertionError("UI tests must never access the network"))
         self.config_mock = self.configuration.start()
         self.provider.start()
@@ -190,12 +185,12 @@ class UITests(unittest.TestCase):
         self.assertEqual(list(app.exception), [])
 
     def test_status_cards_and_private_conversation_switching(self):
-        self.config_mock.return_value = replace(self.settings, provider="openrouter", model="google/gemma-4-31b-it:free")
+        self.config_mock.return_value = replace(self.settings, model="google/gemma-4-31b-it:free")
         app = self.start_app()
         self.select(app, "User / crew member").select(self.users[0]).run()
         app.chat_input[0].set_value("Show WELL-0001 status").run()
         self.assertEqual(len(app.chat_message), 2)
-        self.assertEqual(ScriptedGemma.connection_calls[-1], ("ui-test-placeholder", "openrouter", "google/gemma-4-31b-it:free"))
+        self.assertEqual(ScriptedGemma.connection_calls[-1], ("ui-test-placeholder", "google/gemma-4-31b-it:free", 90))
         self.assertTrue(any(item.label == "Inspection-based status" for item in app.metric))
         self.select(app, "User / crew member").select(self.users[1]).run()
         self.assertEqual(len(app.chat_message), 0)
@@ -234,13 +229,13 @@ class UITests(unittest.TestCase):
 
     def test_context_token_metrics_persist_and_display_each_inference_round(self):
         # Counts here are deliberately synthetic fixtures, not live measurements.
-        TelemetryGemma.preflight_notifications = []
-        with patch("copilot.agent.GemmaClient", TelemetryGemma):
+        TelemetryGemma.progress_notifications = []
+        with patch("copilot.agent.OpenRouterClient", TelemetryGemma):
             app = self.start_app()
             self.assertFalse(any(item.label == "Latest input context" for item in app.metric))
             app.chat_input[0].set_value("Show WELL-0001 status").run()
             self.assertEqual(list(app.exception), [])
-            self.assertEqual(TelemetryGemma.preflight_notifications, [1000, 1500])
+            self.assertEqual(TelemetryGemma.progress_notifications, [None, None])
             self.assertEqual(next(item.value for item in app.metric if item.label == "Latest input context"), "1,500 tokens")
             self.assertEqual(next(item.value for item in app.metric if item.label == "Peak measured context"), "1,500 tokens")
             self.assertEqual(next(item.value for item in app.metric if item.label == "Model rounds"), "2")
@@ -254,48 +249,45 @@ class UITests(unittest.TestCase):
             self.assertEqual(next(item.value for item in app.metric if item.label == "Latest input context"), "1,500 tokens")
             self.network_mock.assert_not_called()
 
-    def test_shared_token_budget_wait_is_visible_without_provider_call(self):
-        class QueuedTelemetry(TelemetryGemma):
-            def complete(self, messages, definitions):
-                self.request_metrics.append({
-                    "provider": "google", "model": "gemma-test-fixture", "input_tokens": 6000,
-                    "input_token_source": "countTokens", "status": "queued",
-                    "rate_limit_status": "queued", "rate_limit_wait_seconds": 12,
-                    "rate_limit_reserved_tokens": 6664, "rate_limit_window_reserved_tokens": 10000,
-                    "rate_limit_budget_tokens": 14500, "rate_limit_limit_tokens": 16000,
-                    "inference_http_attempts": 0,
-                })
-                if callable(self.metrics_callback):
-                    self.metrics_callback(self.request_metrics)
-                raise ModelError("Synthetic local queue timeout; no provider request was sent.")
-
-        with patch("copilot.agent.GemmaClient", QueuedTelemetry):
-            app = self.start_app()
-            app.chat_input[0].set_value("Show WELL-0001 status").run()
-            self.assertEqual(list(app.exception), [])
-            self.assertTrue(any("Waiting for the local Google TPM budget" in item.value for item in app.info))
-            self.assertTrue(any("14,500 of 16,000" in item.value for item in app.caption))
-            self.assertTrue(any("cannot see AI Studio" in item.value for item in app.caption))
-            self.network_mock.assert_not_called()
+    def test_legacy_scheduler_fields_are_not_rendered_or_deleted_from_history(self):
+        payload = json.dumps({"token_usage": [{
+            "provider": "historical-provider", "model": "legacy-model", "input_tokens": 6000,
+            "status": "queued", "rate_limit_status": "queued", "rate_limit_wait_seconds": 12,
+            "rate_limit_reserved_tokens": 6664, "rate_limit_window_reserved_tokens": 10000,
+            "rate_limit_budget_tokens": 14500, "rate_limit_limit_tokens": 16000,
+            "inference_http_attempts": 0}]})
+        with closing(connect(self.database)) as connection, connection:
+            connection.execute("INSERT INTO chat_messages(dataset_id,user_id,session_id,role,content,payload_json,created_at) VALUES (?,?,?,'assistant','Historical answer',?,'2026-10-22T00:00:00Z')",
+                               (self.dataset_id, self.users[0], "legacy-session", payload))
+        app = self.start_app()
+        self.select(app, "Conversation").select("legacy-session").run()
+        self.assertEqual(list(app.exception), [])
+        self.assertFalse(any("Waiting for the local" in item.value for item in app.info))
+        self.assertFalse(any("TPM" in item.value or "Reservations" in item.value for item in app.caption))
+        for frame in app.dataframe:
+            self.assertTrue({"TPM queue", "TPM wait seconds", "Local TPM budget", "Reserved this attempt"}.isdisjoint(frame.value.columns))
+        with closing(connect(self.database)) as connection:
+            self.assertEqual(connection.execute("SELECT payload_json FROM chat_messages WHERE session_id='legacy-session'").fetchone()[0], payload)
+        self.network_mock.assert_not_called()
 
     def test_unavailable_token_count_is_not_displayed_as_zero(self):
         class UnavailableTelemetry(TelemetryGemma):
             def complete(self, messages, definitions):
-                self.request_metrics.append({"provider": "google", "model": "gemma-test-fixture",
+                self.request_metrics.append({"provider": "openrouter", "model": "gemma-test-fixture",
                                              "input_tokens": None, "input_token_source": "unavailable", "measured": False,
                                              "output_tokens": None, "total_tokens": None, "status": "failed",
-                                             "count_error": "Token counting unavailable (HTTP 429)."})
+                                             "failure_kind": "HTTP 429"})
                 if callable(self.metrics_callback):
                     self.metrics_callback(self.request_metrics)
                 raise ModelError("Synthetic quota failure", status_code=429)
 
-        with patch("copilot.agent.GemmaClient", UnavailableTelemetry):
+        with patch("copilot.agent.OpenRouterClient", UnavailableTelemetry):
             app = self.start_app()
             app.chat_input[0].set_value("Show WELL-0001 status").run()
             self.assertEqual(list(app.exception), [])
             self.assertEqual(next(item.value for item in app.metric if item.label == "Latest input context"), "Unavailable")
             self.assertEqual(next(item.value for item in app.metric if item.label == "Peak measured context"), "Unavailable")
-            self.assertTrue(any("Token counting unavailable (HTTP 429)" in item.value for item in app.caption))
+            self.assertTrue(any("Actual token counts are known only when OpenRouter returns usage" in item.value for item in app.caption))
             self.network_mock.assert_not_called()
 
     def test_review_confirm_shared_note_and_cancel_correction(self):

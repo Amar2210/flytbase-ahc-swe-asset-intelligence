@@ -9,14 +9,13 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
-import sqlite3
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
 from copilot.agent import Copilot
 from copilot.config import Settings
-from copilot.db import connect, initialize
+from copilot.db import connect
 from copilot.ingest import import_dataset
 from copilot.model import ModelReply
 from copilot.preferences import load_preferences
@@ -65,19 +64,10 @@ class Q8DemoTests(unittest.TestCase):
         cls.temp = cls.parent / ("q8-demo-" + uuid4().hex)
         cls.temp.mkdir(parents=True)
         cls.db = cls.temp / "q8.sqlite3"
-        public_copy = cls.project / "data" / "test-import-validation.sqlite3"
-        if public_copy.exists():
-            with closing(sqlite3.connect(public_copy.resolve().as_uri() + "?mode=ro", uri=True)) as source:
-                with closing(sqlite3.connect(cls.db)) as destination:
-                    source.backup(destination)
-            initialize(cls.db)
-            with closing(connect(cls.db)) as conn:
-                cls.dataset_id = conn.execute("SELECT dataset_id FROM wells WHERE asset_id='WELL-0333' LIMIT 1").fetchone()[0]
-        else:
-            public = cls.project / "challenge-dataset" / "test-data"
-            if not public.exists():
-                raise unittest.SkipTest("The public Q8 test dataset has not been downloaded.")
-            cls.dataset_id = import_dataset(public, cls.db, "Q8 isolated test")["dataset_id"]
+        public = cls.project / "challenge-dataset" / "test-data"
+        if not public.exists():
+            raise unittest.SkipTest("The public Q8 test dataset has not been downloaded.")
+        cls.dataset_id = import_dataset(public, cls.db, "Q8 isolated test")["dataset_id"]
         cls.settings = Settings(db_path=str(cls.db), as_of_date="2027-01-15", report_date="2027-01-15",
                                 field_timezone="UTC", max_tool_rounds=3)
         # Creates the additive application review table without making requests.
@@ -93,7 +83,7 @@ class Q8DemoTests(unittest.TestCase):
             for table in ("pending_updates", "equipment_replacement_reports", "user_preferences", "chat_messages", "corrections"):
                 conn.execute(f"DELETE FROM {table}")
             conn.execute("DELETE FROM context_notes WHERE origin='runtime'")
-        self.no_network = patch("copilot.agent.GemmaClient", side_effect=AssertionError("Q8 tests never call the provider"))
+        self.no_network = patch("copilot.agent.OpenRouterClient", side_effect=AssertionError("Q8 tests never call the provider"))
         self.no_network.start()
         self.addCleanup(self.no_network.stop)
 

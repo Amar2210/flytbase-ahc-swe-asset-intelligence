@@ -44,8 +44,9 @@ def load_local_env(path: str | Path | None = None) -> dict[str, str]:
 class Settings:
     db_path: str = str(PROJECT_ROOT / "data" / "copilot.sqlite3")
     dataset_path: str = str(PROJECT_ROOT / "challenge-dataset" / "sample-data")
-    provider: str = "google"
-    model: str = "gemma-4-31b-it"
+    # Informational only: provider selection is no longer configurable.
+    provider: str = field(default="openrouter", init=False)
+    model: str = "google/gemma-4-31b-it:free"
     api_key: str = field(default="", repr=False)
     as_of_date: str = "2026-10-16"
     field_timezone: str = "UTC"
@@ -54,29 +55,17 @@ class Settings:
     max_output_tokens: int = 4096
     max_input_tokens: int = 12000
     report_date: str = ""
-    google_tpm_limit: int = 16000
-    google_tpm_headroom: int = 1500
-    google_quota_group: str = "default-project"
 
     @classmethod
     def from_env(cls) -> "Settings":
         environment = {**load_local_env(), **os.environ}
-        provider = environment.get("COPILOT_PROVIDER", "google").strip().lower()
-        if provider not in {"google", "openrouter"}:
-            provider = "google"
-        default_model = (
-            "gemma-4-31b-it" if provider == "google"
-            else "google/gemma-4-31b-it:free"
-        )
-        key = (
-            environment.get("GOOGLE_API_KEY", "").strip() or environment.get("GEMINI_API_KEY", "").strip()
-            if provider == "google"
-            else environment.get("OPENROUTER_API_KEY", "").strip()
-        )
+        # Keep the existing OpenRouter key/model names. Legacy provider and TPM
+        # variables are ignored; they cannot select a different request path.
+        default_model = cls.model
+        key = environment.get("OPENROUTER_API_KEY", "").strip()
         return cls(
             db_path=environment.get("COPILOT_DB_PATH", cls.db_path),
             dataset_path=environment.get("COPILOT_DATASET_PATH", cls.dataset_path),
-            provider=provider,
             model=environment.get("COPILOT_MODEL", default_model).strip() or default_model,
             api_key=key,
             as_of_date=environment.get("COPILOT_AS_OF_DATE", "2026-10-16"),
@@ -86,7 +75,4 @@ class Settings:
             max_output_tokens=int(environment.get("COPILOT_MAX_OUTPUT_TOKENS", "4096")),
             max_input_tokens=max(256, int(environment.get("COPILOT_MAX_INPUT_TOKENS", "12000"))),
             report_date=environment.get("COPILOT_REPORT_DATE", "").strip(),
-            google_tpm_limit=max(1, int(environment.get("COPILOT_GOOGLE_TPM_LIMIT", "16000"))),
-            google_tpm_headroom=max(0, int(environment.get("COPILOT_GOOGLE_TPM_HEADROOM", "1500"))),
-            google_quota_group=environment.get("COPILOT_GOOGLE_QUOTA_GROUP", "default-project").strip(),
         )
